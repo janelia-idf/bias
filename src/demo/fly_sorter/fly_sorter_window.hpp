@@ -5,6 +5,7 @@
 #include "parameters.hpp"
 #include "image_grabber.hpp"
 #include "blob_finder.hpp"
+#include "identity_tracker.hpp"
 #include "fly_segmenter.hpp"
 #include "hog_position_fitter.hpp"
 #include "gender_sorter.hpp"
@@ -12,6 +13,8 @@
 #include <QCloseEvent>
 #include <QMainWindow>
 #include <QPointer>
+#include <QMap>
+#include <QList>
 #include <opencv2/core/core.hpp>
 
 // Debug
@@ -26,6 +29,14 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class QVarianMap;
 class QByteArray;
+
+
+enum TrainingDataMode 
+{
+    TRAINING_DATA_MODE_SINGLE=0,
+    TRAINING_DATA_MODE_BATCH
+};
+
 
 class FlySorterWindow : public QMainWindow, private Ui::FlySorterWindow
 {
@@ -50,6 +61,7 @@ class FlySorterWindow : public QMainWindow, private Ui::FlySorterWindow
         void startPushButtonClicked();
         void reloadPushButtonClicked();
         void httpOutputCheckBoxChanged(int state);
+        void trainingDataCheckBoxChanged(int state);
         void newImage(ImageData imageData);
         void updateDisplayOnTimer(); 
         void networkAccessManagerFinished(QNetworkReply *reply);
@@ -60,6 +72,7 @@ class FlySorterWindow : public QMainWindow, private Ui::FlySorterWindow
     private:
 
         bool running_;
+
         FlySorterParam param_;
         float displayFreq_;
         QPointer<QThreadPool> threadPoolPtr_;
@@ -69,12 +82,25 @@ class FlySorterWindow : public QMainWindow, private Ui::FlySorterWindow
         QPixmap previewPixmapOrig_;
         QPixmap thresholdPixmapOrig_;
         ImageData imageData_;
-        BlobFinderData blobFinderData_;
-        FlySegmenterData flySegmenterData_;
-        HogPositionFitterData hogPositionFitterData_;
-        GenderSorterData genderSorterData_;
         unsigned int httpRequestErrorCount_;
         QString parameterFileName_;
+
+        BlobFinder blobFinder_;
+        BlobFinderData blobFinderData_;
+
+        IdentityTracker identityTracker_;
+
+        FlySegmenter flySegmenter_;
+        FlySegmenterData flySegmenterData_;
+
+        HogPositionFitter hogPositionFitter_;
+        HogPositionFitterData hogPositionFitterData_;
+
+        GenderSorter genderSorter_;
+        GenderSorterData genderSorterData_;
+
+        QList<QString> batchVideoFileList_;
+        int batchVideoFileIndex_;
 
         void connectWidgets();
         void initialize();
@@ -92,13 +118,21 @@ class FlySorterWindow : public QMainWindow, private Ui::FlySorterWindow
         QByteArray dataToJson();
         void loadParamFromFile();
         void updateParamText();
+        void updateWidgetsOnLoad();
 
+        void setupTrainingDataWrite(QString videoFileName);
+        void setupBatchDataWrite();
+        TrainingDataMode getTrainingDataMode();
+        bool isTrainingDataModeSingle();
+        bool isTrainingDataModeBatch();
+        bool updateBatchVideoFileList();
+        bool createTrainingData();
 
         // Devel 
         // ---------------------------------------------------------
         std::ofstream debugStream;
-        std::default_random_engine generator_;
-        std::uniform_int_distribution<unsigned int> distribution_;
+        //std::default_random_engine generator_;
+        //std::uniform_int_distribution<unsigned int> distribution_;
         // ---------------------------------------------------------
 
 };

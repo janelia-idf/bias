@@ -4,6 +4,7 @@
 #include "fly_segmenter.hpp"
 #include <list>
 #include <vector>
+#include <string>
 #include <opencv2/core/core.hpp>
 
 //Debug 
@@ -33,6 +34,8 @@ class PositionData
         SegmentData segmentData;
 
         PositionData();
+        std::string toStdString(unsigned int indent=0);
+        void print(unsigned int indent=0);
 
         static const bool DEFAULT_IS_FLY;
         static const bool DEFAULT_IS_MULTIPLE_FLIES;
@@ -55,16 +58,51 @@ class HogPositionFitter
         HogPositionFitter();
         HogPositionFitter(HogPositionFitterParam param);
         void setParam(HogPositionFitterParam param);
-        HogPositionFitterData fit(FlySegmenterData flySegmenterData, unsigned long frameCount, cv::Mat img);
+        void trainingDataWriteEnable(std::string fileNamePrefix);
+        void trainingDataWriteDisable();
+
+        HogPositionFitterData fit(
+                FlySegmenterData flySegmenterData, 
+                unsigned long frameCount, 
+                cv::Mat img
+                );
 
     private:
         bool showDebugWindow_;
+        bool writeTrainingData_;
+        std::string trainingFileNamePrefix_;
         HogPositionFitterParam param_;
+
         cv::Mat getFillMask(cv::Mat image);
         std::vector<double> getPixelFeatureVector(cv::Mat image);
-        std::vector<double> getHistGradMag(cv::Mat normGradMag, cv::Mat mask);
-        std::vector<double> getHistGradOri(cv::Mat gradOri, cv::Mat normGradMag, cv::Mat mask);
-        std::vector<double> getHistColor(cv::Mat subImage, cv::Mat mask);
+
+        std::vector<double> getHistGradMag(
+                cv::Mat normGradMag, 
+                cv::Mat mask
+                );
+
+        std::vector<double> getHistGradOri(
+                cv::Mat gradOri, 
+                cv::Mat normGradMag, 
+                cv::Mat mask
+                );
+
+        std::vector<double> getHistColor(
+                cv::Mat subImage, 
+                cv::Mat mask
+                );
+
+        void createTrainingData(
+                unsigned long frameCount, 
+                PositionData posData,
+                cv::Mat img
+                );
+
+        void writePixelFeatureVector(
+                std::string fileName, 
+                std::vector<double> pixVector
+                );
+
 };
 
 

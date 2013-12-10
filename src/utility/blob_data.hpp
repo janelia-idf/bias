@@ -43,12 +43,17 @@ namespace bias
     class BlobData
     {
         public:
+            long id;
             double area;
+            bool onBorderX;
+            bool onBorderY;
             Centroid centroid;
             Ellipse ellipse;
             cv::Rect boundingRect;
             cv::Mat boundingImage;
             std::vector<cv::Point> contourVector;
+
+            static const long ID_NOT_ASSIGNED;
 
             BlobData();
             BlobData(
@@ -66,6 +71,7 @@ namespace bias
             std::string toStdString( unsigned int indent=0);
             void print(unsigned int indent=0);
             void draw(cv::Mat &img);
+            bool isOnBorder();
 
     };
 

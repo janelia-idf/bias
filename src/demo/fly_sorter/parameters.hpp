@@ -208,14 +208,33 @@ class IdentityTrackerParam
 {
     public:
 
-        float radius;
-        static const float DEFAULT_RADIUS;
+        float meanDx;
+        static const float DEFAULT_MEAN_DX;
 
-        float velocityX;
-        static const float DEFAULT_VELOCITY_X;
+        float meanDy;
+        static const float DEFAULT_MEAN_DY;
 
-        float velocityY; 
-        static const float DEFAULT_VELOCITY_Y;
+        float meanWidth;
+        static const float DEFAULT_MEAN_WIDTH;
+
+        float meanHeight;
+        static const float DEFAULT_MEAN_HEIGHT;
+
+        float stdDx;
+        static const float DEFAULT_STD_DX;
+
+        float stdDy;
+        static const float DEFAULT_STD_DY;
+
+        float stdWidth;
+        static const float DEFAULT_STD_WIDTH;
+
+        float stdHeight;
+        static const float DEFAULT_STD_HEIGHT;
+
+        float maxCost;
+        static const float DEFAULT_MAX_COST;
+
 
         IdentityTrackerParam();
         QVariantMap toMap();
@@ -240,6 +259,7 @@ class FlySorterParam
         ServerParam server;
         ImageGrabberParam imageGrabber;
         BlobFinderParam blobFinder;
+        IdentityTrackerParam identityTracker;
         FlySegmenterParam flySegmenter;
         HogPositionFitterParam hogPositionFitter;
         GenderSorterParam genderSorter;

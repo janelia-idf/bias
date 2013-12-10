@@ -14,10 +14,12 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QDateTime>
+#include <QDir>
 #include <iostream>
 #include <list>
 #include <random>
 #include <cmath>
+
 
 // Constants
 // ----------------------------------------------------------------------------
@@ -26,6 +28,9 @@ const unsigned int MAX_HTTP_REQUEST_ERROR = 10;
 const double DEFAULT_DISPLAY_FREQ = 15.0; // Hz
 const QSize PREVIEW_DUMMY_IMAGE_SIZE = QSize(320,256);
 const QString DEFAULT_PARAMETER_FILENAME = QString("fly_sorter_param.json");
+const QString TRAINING_DATA_BASE_STRING = QString("training_data");
+const QString TRAINING_VIDEO_BASE_STRING = QString("training_video");
+
 
 // Public Methods
 // ----------------------------------------------------------------------------
@@ -36,6 +41,7 @@ FlySorterWindow::FlySorterWindow(QWidget *parent) : QMainWindow(parent)
     connectWidgets();
     initialize();
 }
+
 
 // Protected methods
 // ----------------------------------------------------------------------------
@@ -85,13 +91,50 @@ void FlySorterWindow::startPushButtonClicked()
 {
     if (!running_)
     {
-        debugStream.open("debug_data.txt");
+        // Setup sorting and tracking
+        blobFinder_ = BlobFinder(param_.blobFinder);
+        identityTracker_ = IdentityTracker(param_.identityTracker);
+        flySegmenter_ = FlySegmenter(param_.flySegmenter);
+        hogPositionFitter_ = HogPositionFitter(param_.hogPositionFitter);
+        genderSorter_ = GenderSorter(param_.genderSorter);
+
+        // Create training data
+        if (trainingDataCheckBoxPtr_ -> checkState() == Qt::Checked)
+        {
+            if (isTrainingDataModeSingle())
+            {
+                setupTrainingDataWrite(param_.imageGrabber.captureInputFile);
+            }
+            else
+            {
+                // Update vector of batch video files 
+                bool success = updateBatchVideoFileList();
+                if (!success)
+                {
+                    return;
+                }
+                batchVideoFileIndex_ = 0;
+                setupBatchDataWrite();
+            }
+        }
+        else
+        {
+            hogPositionFitter_.trainingDataWriteDisable();
+        }
+
         startImageCapture();
+
+        // DEBUG - open debug output data file
+        // --------------------------------------------------------------------
+        //debugStream.open("debug_data.txt");
     }
     else
     {
         stopImageCapture();
-        debugStream.close();
+
+        // DEBUG - close debug output data file
+        // --------------------------------------------------------------------
+        //debugStream.close();
     }
 }
 
@@ -100,7 +143,12 @@ void FlySorterWindow::startImageCapture()
 {
     if (!running_)
     {
-        imageGrabberPtr_ = new ImageGrabber(param_.imageGrabber); 
+        ImageGrabberParam imageGrabberParam = param_.imageGrabber;
+        if (createTrainingData() && isTrainingDataModeBatch())
+        {
+            imageGrabberParam.captureInputFile = batchVideoFileList_[batchVideoFileIndex_];
+        }
+        imageGrabberPtr_ = new ImageGrabber(imageGrabberParam); 
 
         connect(
                 imageGrabberPtr_,
@@ -139,10 +187,12 @@ void FlySorterWindow::startImageCapture()
                 SLOT(newImage(ImageData))
                 );
 
-        threadPoolPtr_ -> start(imageGrabberPtr_);
         running_ = true;
+        threadPoolPtr_ -> start(imageGrabberPtr_);
+
         startPushButtonPtr_ -> setText("Stop");
         reloadPushButtonPtr_ -> setEnabled(false);
+        trainingDataCheckBoxPtr_ -> setEnabled(false);
     }
 }
 
@@ -165,6 +215,7 @@ void FlySorterWindow::reloadPushButtonClicked()
     }
     loadParamFromFile();
     updateParamText();
+    updateWidgetsOnLoad();
     if (isRunning)
     {
         startImageCapture();
@@ -181,66 +232,70 @@ void FlySorterWindow::httpOutputCheckBoxChanged(int state)
 }
 
 
+void FlySorterWindow::trainingDataCheckBoxChanged(int state)
+{
+    if (state == Qt::Checked)
+    {
+        singleRadioButtonPtr_ -> setEnabled(true);
+        batchRadioButtonPtr_ -> setEnabled(true);
+    }
+    else
+    {
+        singleRadioButtonPtr_ -> setEnabled(false);
+        batchRadioButtonPtr_ -> setEnabled(false);
+    }
+}
+
+
 void FlySorterWindow::newImage(ImageData imageData)
 {
     if (running_)
     {
-        std::cout << imageData.frameCount << std::endl;
-
         imageData_.copy(imageData);
 
-        BlobFinder blobFinder = BlobFinder(param_.blobFinder);
-        blobFinderData_ = blobFinder.findBlobs(imageData_.mat);
+        // Find flies and sort by gender
+        blobFinderData_ = blobFinder_.findBlobs(imageData_.mat);
+        identityTracker_.update(blobFinderData_);
+        flySegmenterData_ = flySegmenter_.segment(blobFinderData_);
 
-        FlySegmenter flySegmenter = FlySegmenter(param_.flySegmenter);
-        flySegmenterData_ = flySegmenter.segment(blobFinderData_);
+        hogPositionFitterData_ = hogPositionFitter_.fit(
+                flySegmenterData_,
+                imageData.frameCount,
+                imageData.mat
+                );
 
-        HogPositionFitter hogPositionFitter = HogPositionFitter(param_.hogPositionFitter);
-        hogPositionFitterData_ = hogPositionFitter.fit(flySegmenterData_,imageData.frameCount,imageData.mat);
+        genderSorterData_ = genderSorter_.sort(hogPositionFitterData_);
 
-        GenderSorter genderSorter = GenderSorter(param_.genderSorter);
-        genderSorterData_ = genderSorter.sort(hogPositionFitterData_);
-
-
-        debugStream << "Frame Count: " << imageData.frameCount << std::endl;
-        if (hogPositionFitterData_.positionDataList.empty())
-        {
-            debugStream << "  " << "PositionData: None"  << std::endl;
-        }
-        else
-        {
-            debugStream << "  " << "PositionData: "  << std::endl;
-
-            PositionDataList::iterator it;
-            unsigned int count;
-            for (
-                    it  = hogPositionFitterData_.positionDataList.begin(), count=0;
-                    it != hogPositionFitterData_.positionDataList.end();
-                    it++, count++
-                )
-            {
-                PositionData posData = *it;
-                debugStream << std::endl;
-                debugStream << "    " << "count:            " << count << std::endl;
-                debugStream << "    " << "success:          " << posData.success << std::endl;
-                debugStream << "    " << "isFly:            " << posData.isFly << std::endl; 
-                debugStream << "    " << "isMultipleFlies:  " << posData.isMultipleFlies << std::endl;
-                debugStream << "    " << "bodyArea:         " << posData.bodyArea << std::endl;
-                debugStream << std::endl;
-            }
-        }
-
-        // Write images to file
-        // ----------------------------------------------------------------------
-        //QString imgFileName = QString("image_%1.bmp").arg(imageData.frameCount);
-        //cv::imwrite(imgFileName.toStdString(),imageData.mat);
-        // ----------------------------------------------------------------------
-
-
+        // Send position and gender data via http.
         if ((httpOutputCheckBoxPtr_ -> checkState()) == Qt::Checked)
         {
             sendDataViaHttpRequest();
         }
+
+        //// DEBUG - display gender data
+        //// -------------------------------------------------------------------------
+        //if (0)
+        //{
+        //    GenderDataList genderDataList = genderSorterData_.genderDataList;
+        //    GenderDataList::iterator it;
+
+        //    for (it=genderDataList.begin(); it!=genderDataList.end(); it++)
+        //    {
+        //        GenderData data = *it;
+        //        std::cout << data.toStdString(1) << std::endl;
+        //    }
+        //}
+        //// -------------------------------------------------------------------------
+
+        //// DEBUG - write images to file
+        //// -------------------------------------------------------------------------
+        //if (0)
+        //{
+        //    QString imgFileName = QString("image_%1.bmp").arg(imageData.frameCount);
+        //    cv::imwrite(imgFileName.toStdString(),imageData.mat);
+        //}
+        //// -------------------------------------------------------------------------
+
     }
 }
 
@@ -289,19 +344,43 @@ void FlySorterWindow::cameraSetupError(QString message)
     QMessageBox::critical(this, errMsgTitle, message);
 }
 
+
 void FlySorterWindow::imageGrabberFileReadError(QString message)
 {
     QString errMsgTitle("Image Grabber File Read Error");
     QMessageBox::critical(this, errMsgTitle, message);
 }
 
+
 void FlySorterWindow::OnImageCaptureStopped()
 {
         threadPoolPtr_ -> waitForDone();
+
+        if (createTrainingData() && isTrainingDataModeBatch())
+        {
+            batchVideoFileIndex_++;
+            if (batchVideoFileIndex_ < batchVideoFileList_.size())
+            {
+                setupBatchDataWrite();
+                running_ = false;
+                startImageCapture();
+                return;
+            }
+            else
+            {
+                statusbar -> clearMessage();
+            }
+        }
+
         running_ = false;
         startPushButtonPtr_ -> setText("Start");
         reloadPushButtonPtr_ -> setEnabled(true);
+        if (param_.imageGrabber.captureMode == QString("file"))
+        {
+            trainingDataCheckBoxPtr_ -> setEnabled(true);
+        }
 }
+
 
 
 // Private Methods
@@ -330,7 +409,16 @@ void FlySorterWindow::connectWidgets()
             this,
             SLOT(httpOutputCheckBoxChanged(int))
            );
+
+    connect(
+            trainingDataCheckBoxPtr_,
+            SIGNAL(stateChanged(int)),
+            this,
+            SLOT(trainingDataCheckBoxChanged(int))
+           );
+
 }
+
 
 
 void FlySorterWindow::initialize()
@@ -341,33 +429,20 @@ void FlySorterWindow::initialize()
     parameterFileName_ = DEFAULT_PARAMETER_FILENAME;
     threadPoolPtr_ = new QThreadPool(this);
     threadPoolPtr_ -> setMaxThreadCount(MAX_THREAD_COUNT);
+    batchVideoFileIndex_ = 0;
 
     setupImageLabels();
     setupDisplayTimer();
     setupNetworkAccessManager();
     loadParamFromFile();
     updateParamText();
+    updateWidgetsOnLoad();
 
     // Temporary
-    // --------------------------------------------------------------------------
-    QString appDirPath = QCoreApplication::applicationDirPath();
-    std::cout << "applicationDirPath = " << appDirPath.toStdString() << std::endl;
-    distribution_ = std::uniform_int_distribution<unsigned int>(0,1);
-
-    //
-    //int n = 15;
-    //int m = 2*n+1;
-    //cv::Mat se = cv::getStructuringElement(cv::MORPH_ELLIPSE,cv::Size(m,m));
-    //for (int i=0; i<m; i++)
-    //{
-    //    for (int j=0; j<m; j++)
-    //    {
-    //        std::cout << int(se.at<uchar>(i,j)) << " ";
-    //    }
-    //    std::cout << std::endl;
-    //}
-    //
-
+    // ----------------------------------------------------------------------------
+    //distribution_ = std::uniform_int_distribution<unsigned int>(0,1);
+    //QString appDirPath = QCoreApplication::applicationDirPath();
+    //std::cout << "applicationDirPath = " << appDirPath.toStdString() << std::endl;
 }
 
 
@@ -478,63 +553,42 @@ void FlySorterWindow::sendDataViaHttpRequest()
 QVariantMap FlySorterWindow::dataToMap()
 {
     QVariantMap dataMap;
-    dataMap.insert("ndetections", blobFinderData_.blobDataList.size());
+
+    int numOkBlobs = getNumberOkItems(blobFinderData_.blobDataList);
+    dataMap.insert("ndetections", numOkBlobs);
     
+    GenderDataList genderDataList = genderSorterData_.genderDataList;
+    GenderDataList::iterator it;
     QVariantList detectionList;
-    BlobDataList::iterator it;
-    unsigned int cnt = 0;
 
-    // Development
-    // ------------------------------------------------------------------------
-    static bool isNextFlyFemale = true;
-    // -------------------------------------------------------------------------
-
-
-    for (it=blobFinderData_.blobDataList.begin(); it!=blobFinderData_.blobDataList.end(); it++)
+    for (it=genderDataList.begin(); it!=genderDataList.end(); it++)
     {
-        BlobData blobData = *it;
+        GenderData genderData = *it;
+
+        bool isOnBorder = genderData.positionData.segmentData.blobData.isOnBorder();
+        bool success = genderData.positionData.success;
+
+        if (isOnBorder ) 
+        {
+            // Throw away data on the border.
+            continue;
+        }
+
         QVariantMap detectionMap;
 
-        // Devel - select fly gender based on genderMode setting
-        // ----------------------------------------------------------------------
-        switch (param_.genderMode)
-        {
-            case GenderModeMaleOnly:
-                detectionMap.insert("fly_type", "male");
-                break;
+        QString genderString = QString::fromStdString( 
+                GenderSorter::GenderToString(genderData.gender)
+                );
 
-            case GenderModeEveryOther:
-                if (isNextFlyFemale)
-                {
-                    detectionMap.insert("fly_type", "female");
-                    isNextFlyFemale = false;
-                }
-                else
-                {
-                    detectionMap.insert("fly_type", "male");
-                    isNextFlyFemale = true;
-                }
-                break;
+        QVariant id = QVariant::fromValue<long>(
+                genderData.positionData.segmentData.blobData.id
+                );
 
-            default:
-                unsigned int coinFlip = distribution_(generator_);
-                if (coinFlip == 0)
-                {
-                    detectionMap.insert("fly_type", "male");
-                }
-                else
-                {
-                    detectionMap.insert("fly_type", "female");
-                }
-                break;
-        }
-        // --------------------------------------------------------------------
-        
-        detectionMap.insert("fly_id", cnt);
-        detectionMap.insert("x",blobData.centroid.x);
-        detectionMap.insert("y",blobData.centroid.y);
+        detectionMap.insert("fly_type", genderString); 
+        detectionMap.insert("fly_id", id);
+        detectionMap.insert("x", genderData.positionData.meanXAbs);
+        detectionMap.insert("y", genderData.positionData.meanYAbs);
         detectionList.push_back(detectionMap);
-        cnt++;
     }
     dataMap.insert("detections", detectionList);
     dataMap.insert("time_acquired", imageData_.dateTime);
@@ -615,4 +669,170 @@ void FlySorterWindow::updateParamText()
     QByteArray paramJson = param_.toJson();
     QByteArray prettyParamJson = prettyIndentJson(paramJson);
     paramsTextEditPtr_ -> setPlainText(QString(prettyParamJson));
+}
+
+
+void FlySorterWindow::updateWidgetsOnLoad()
+{
+    if (param_.imageGrabber.captureMode == QString("file"))
+    {
+        trainingDataCheckBoxPtr_ -> setEnabled(true);
+        if (trainingDataCheckBoxPtr_ -> checkState() == Qt::Checked)
+        {
+            singleRadioButtonPtr_ -> setEnabled(true);
+            batchRadioButtonPtr_ -> setEnabled(true);
+        }
+        else
+        {
+            singleRadioButtonPtr_ -> setEnabled(false);
+            batchRadioButtonPtr_ -> setEnabled(false);
+        }
+    }
+    else
+    {
+        trainingDataCheckBoxPtr_ -> setCheckState(Qt::Unchecked);
+        trainingDataCheckBoxPtr_ -> setEnabled(false);
+        singleRadioButtonPtr_ -> setEnabled(false);
+        batchRadioButtonPtr_ -> setEnabled(false);
+    }
+}
+
+
+void FlySorterWindow::setupTrainingDataWrite(QString videoFileName)
+{
+    // Get application directory
+    QString appPathString = QCoreApplication::applicationDirPath();
+    QDir appDir = QDir(appPathString);
+
+    // Create training data base directory if it doesn't exist
+    QString baseDirString = TRAINING_DATA_BASE_STRING;
+    QDir baseDir = QDir(appDir.absolutePath() + "/" + baseDirString);
+    if (!baseDir.exists())
+    {
+        appDir.mkdir(baseDirString);
+    }
+
+    // Create training data directory if it doesn't exist
+    QString videoPrefix = videoFileName.split(".", QString::SkipEmptyParts).at(0);
+    QDir dataDir = QDir(baseDir.absolutePath() + "/" + videoPrefix);
+    if (!dataDir.exists())
+    {
+        baseDir.mkdir(videoPrefix);
+    }
+
+    // Create training data file prefix.
+    QString dataPrefix = dataDir.absoluteFilePath("data");
+    hogPositionFitter_.trainingDataWriteEnable(dataPrefix.toStdString());
+}
+
+
+void FlySorterWindow::setupBatchDataWrite()
+{
+    QFileInfo videoFileInfo(batchVideoFileList_[batchVideoFileIndex_]);
+    setupTrainingDataWrite(videoFileInfo.fileName());
+    QStringList statusMsg; 
+    statusMsg << QString("Batch "); 
+    statusMsg << QString::number(batchVideoFileIndex_+1);
+    statusMsg << QString("/");  
+    statusMsg << QString::number(batchVideoFileList_.size());
+    statusMsg << QString("  "); 
+    statusMsg << videoFileInfo.fileName();
+    statusbar -> showMessage(statusMsg.join(QString("")));
+}
+
+
+TrainingDataMode FlySorterWindow::getTrainingDataMode()
+{
+    if (singleRadioButtonPtr_ -> isChecked())
+    {
+        return TRAINING_DATA_MODE_SINGLE;
+    }
+    else
+    {
+        return TRAINING_DATA_MODE_BATCH;
+    }
+}
+
+
+bool FlySorterWindow::isTrainingDataModeSingle()
+{
+    if (getTrainingDataMode() == TRAINING_DATA_MODE_SINGLE)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+bool FlySorterWindow::isTrainingDataModeBatch()
+{
+    if (getTrainingDataMode() == TRAINING_DATA_MODE_BATCH)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+
+bool FlySorterWindow::updateBatchVideoFileList()
+{
+    // Get application directory
+    QString appPathString = QCoreApplication::applicationDirPath();
+    QDir appDir = QDir(appPathString);
+
+    // Check to see if video file base directory exists 
+    QString videoDirString = TRAINING_VIDEO_BASE_STRING;
+    QDir videoDir = QDir(appDir.absolutePath() + "/" + videoDirString);
+    if (!videoDir.exists())
+    {
+        QString errMsgTitle("Batch Training Data Error");
+        QString message = QString("%1 subdirectory does not exist").arg(videoDirString);
+        QMessageBox::critical(this, errMsgTitle, message);
+        return false;
+    }
+
+    // Get list of '.avi' files in video file directory
+    videoDir.setNameFilters(QStringList()<<"*.avi");
+    QList<QString> videoNameList  = videoDir.entryList();
+    if (videoNameList.empty())
+    {
+        QString errMsgTitle("Batch Training Data Error");
+        QString message = QString("no .avi video files found in %1 subdirectory").arg(videoDirString);
+        QMessageBox::critical(this, errMsgTitle, message);
+        return false;
+    }
+
+    std::cout << std::endl;
+    std::cout << "batch video file list" << std::endl;
+    for (int i=0; i< videoNameList.size(); i++)
+    {
+        std::cout << " " << i << " " << videoNameList[i].toStdString() << std::endl;
+    }
+    std::cout << std::endl;
+
+    // Get absolute path of video files
+    batchVideoFileList_.clear();
+    for (int i=0; i<videoNameList.size(); i++)
+    {
+        QString absoluteFilePath = videoDir.absoluteFilePath(videoNameList[i]);
+        batchVideoFileList_.push_back(absoluteFilePath);
+    }
+    return true;
+}
+
+bool FlySorterWindow::createTrainingData()
+{ 
+    if (trainingDataCheckBoxPtr_ -> checkState() == Qt::Checked)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
