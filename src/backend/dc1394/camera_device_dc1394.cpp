@@ -77,15 +77,33 @@ namespace bias {
             }
             connected_ = true;
 
+            dc1394error_t rsp = dc1394_video_set_mode(camera_dc1394_, DC1394_VIDEO_MODE_FORMAT7_0);
+            if (rsp != DC1394_SUCCESS) 
+            {
+                std::cout << "DEVEL: failed to set camera to format7 mode 0" << std::endl;
+            }
+
             // DEVEL 
             // -------------------------------------------------------------------
             // Print supported video modes
-            Property prop;
-            prop = getProperty(PROPERTY_TYPE_BRIGHTNESS);
-            prop.print();
-            std::cout << std::endl;
-            prop = getProperty(PROPERTY_TYPE_TRIGGER_MODE);
-            prop.print();
+            //Property prop;
+            //PropertyInfo propInfo;
+
+            //propInfo = getPropertyInfo(PROPERTY_TYPE_BRIGHTNESS);
+            //propInfo.print();
+
+            //prop = getProperty(PROPERTY_TYPE_BRIGHTNESS);
+            //prop.print();
+
+            //prop.value = 200;
+            //setProperty(prop);
+            //prop = getProperty(PROPERTY_TYPE_BRIGHTNESS);
+            //prop.print();
+
+            //prop = getProperty(PROPERTY_TYPE_TRIGGER_MODE);
+            //prop.print();
+            //propInfo = getPropertyInfo(PROPERTY_TYPE_TRIGGER_MODE);
+            //propInfo.print();
             // --------------------------------------------------------------------
             
         }
@@ -200,14 +218,18 @@ namespace bias {
             throw RuntimeError(ERROR_DC1394_GRAB_IMAGE, ssError.str());
         }
 
-        dc1394error_t error;
-        error = dc1394_capture_dequeue(
+        // Get frame  
+        //dc1394error_t error = dc1394_capture_dequeue(
+        //        camera_dc1394_, 
+        //        DC1394_CAPTURE_POLICY_WAIT, 
+        //        &frame_dc1394_
+        //        );
+        dc1394error_t error = dc1394_capture_dequeue(
                 camera_dc1394_, 
-                DC1394_CAPTURE_POLICY_WAIT, 
+                DC1394_CAPTURE_POLICY_POLL, 
                 &frame_dc1394_
                 );
 
-        // Get frame  
         if (error != DC1394_SUCCESS) 
         { 
             std::stringstream ssError;
@@ -216,32 +238,34 @@ namespace bias {
             ssError << error << std::endl;
             throw RuntimeError(ERROR_DC1394_CAPTURE_DEQUEUE, ssError.str());
         }
-
-        // update time stamp
-        updateTimeStamp();
-        isFirst_ = false;
-
-        // Copy to cv image  (Temporary) - assume mono8 format
-        // Need to modify to handle color images.
-        // --------------------------------------------------------------------------
-        if ((image.rows != frame_dc1394_ -> size[1]) || (image.cols != frame_dc1394_ -> size[0]))
+        if (frame_dc1394_ != NULL)
         {
-            image = cv::Mat(frame_dc1394_-> size[1], frame_dc1394_-> size[0], CV_8UC1); 
+            // update time stamp
+            updateTimeStamp();
+            isFirst_ = false;
+
+            // Copy to cv image  (Temporary) - assume mono8 format
+            // Need to modify to handle color images.
+            // --------------------------------------------------------------------------
+            if ((image.rows != frame_dc1394_ -> size[1]) || (image.cols != frame_dc1394_ -> size[0]))
+            {
+                image = cv::Mat(frame_dc1394_-> size[1], frame_dc1394_-> size[0], CV_8UC1); 
+            }
+
+            unsigned int frameSize = (frame_dc1394_ -> size[0])*(frame_dc1394_ -> size[1]);
+            unsigned char *pData0 = frame_dc1394_ -> image;
+            unsigned char *pData1 = pData0 +  frameSize - 1;
+            std::copy(pData0, pData1, image.data);
+
+
+            // Put frame back 
+            error = dc1394_capture_enqueue(camera_dc1394_, frame_dc1394_);
+
+            //std::cout << "color coding: " << getColorCodingString_dc1394(frame_dc1394_ -> color_coding) << std::endl;
+            //std::cout << "size:         " << frame_dc1394_ -> size[0] << ", " << frame_dc1394_ -> size[1] << std::endl;
+            //std::cout << "total bytes:  " << frame_dc1394_ -> total_bytes << std::endl;
+            //std::cout << "frameSize:    " << frameSize << std::endl;
         }
-
-        unsigned int frameSize = (frame_dc1394_ -> size[0])*(frame_dc1394_ -> size[1]);
-        unsigned char *pData0 = frame_dc1394_ -> image;
-        unsigned char *pData1 = pData0 +  frameSize - 1;
-        std::copy(pData0, pData1, image.data);
-
-
-        // Put frame back 
-        error = dc1394_capture_enqueue(camera_dc1394_, frame_dc1394_);
-
-        //std::cout << "color coding: " << getColorCodingString_dc1394(frame_dc1394_ -> color_coding) << std::endl;
-        //std::cout << "size:         " << frame_dc1394_ -> size[0] << ", " << frame_dc1394_ -> size[1] << std::endl;
-        //std::cout << "total bytes:  " << frame_dc1394_ -> total_bytes << std::endl;
-        //std::cout << "frameSize:    " << frameSize << std::endl;
     }
 
 
@@ -498,99 +522,58 @@ namespace bias {
         return prop;
     }
 
-
-    // TODO
-    // ------------------------------------------------------------------------------------------------------
     PropertyInfo CameraDevice_dc1394::getPropertyInfo(PropertyType propType) 
     {
-        PropertyInfo propInfo;
-
-
+        dc1394feature_info_t featureInfo_dc1394;
+        getFeatureInfo_dc1394(propType, featureInfo_dc1394);
+        PropertyInfo propInfo = convertPropertyInfo_from_dc1394(featureInfo_dc1394);
         return propInfo;
     }
 
-    // TODO
-    // ------------------------------------------------------------------------------------------------------
     void CameraDevice_dc1394::setProperty(Property prop) 
     {
-        Property propCurr = getProperty(prop.type);
-        dc1394feature_t featureId = convertPropertyType_to_dc1394(prop.type);
+        dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(prop.type);
 
-        // Set auto
-        if (prop.autoActive && !propCurr.autoActive)
+        dc1394feature_info_t featureInfo_dc1394;
+        getFeatureInfo_dc1394(prop.type, featureInfo_dc1394);
+        Property propCurr = convertProperty_from_dc1394(featureInfo_dc1394);
+        PropertyInfo propInfoCurr = convertPropertyInfo_from_dc1394(featureInfo_dc1394);
+
+        if (!propInfoCurr.present)
         {
-            // DEVEL: need to that auto mode is allowed ....
-            dc1394error_t rsp = dc1394_feature_set_mode(camera_dc1394_,featureId,DC1394_FEATURE_MODE_AUTO);
-            std::stringstream ssError;
-            ssError << __PRETTY_FUNCTION__;
-            ssError << ": error unable to set dc1394 freature mode to auto" << std::endl;
-            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+            return;
         }
-
-        if (prop.onePush)
+        if (prop.autoActive && !propCurr.autoActive && propInfoCurr.autoCapable)
         {
-
+            setFeatureModeAuto_dc1394(prop.type);
         }
-
-        //// Get current feature settings from camera
-        //dc1394feature_info_t featureInfo_dc1394;
-        //featureInfo_dc1394.id = convertPropertyType_to_dc1394(prop.type);
-        //dc1394error_t rsp = dc1394_feature_get(camera_dc1394_, &featureInfo_dc1394);
-        //if (rsp != DC1394_SUCCESS)
-        //{
-        //    std::stringstream ssError;
-        //    ssError << __PRETTY_FUNCTION__;
-        //    ssError << ": error unable to get dc1394 freature information" << std::endl;
-        //    throw RuntimeError(ERROR_DC1394_GET_FEATURE_INFO, ssError.str());
-        //}
-
-        //// Modifiy feature settigns with property values in prop
-        //convertProperty_to_dc1394(prop, featureInfo_dc1394);
-
-        //// Set current mode - if in list of available feature modes
-        //bool modeAvailable = false;
-        //for (int i=0; i<featureInfo_dc1394.modes.num; i++)
-        //{
-        //    if (featureInfo_dc1394.current_mode == featureInfo_dc1394
-        //}
-
-
-
-
-
-
-
-        //if (featureInfo_dc1394.abs_control && featureInfo_dc1394.absolute_capable)
-        //{
-        //    // Set via absolute value
-        //    if (
-        //            (featureInfo_dc1394.abs_value >= featureInfo_dc1394.abs_min) &&
-        //            (featureInfo_dc1394.abs_value <= featureInfo_dc1394.abs_max)
-        //       )
-        //    { 
-        //        dc1394error_t  rsp = dc1394_feature_set_absolute_value(
-        //                camera_dc1394_, 
-        //                featureInfo_dc1394.id, 
-        //                featureInfo_dc1394.abs_value
-        //                );
-        //        if (rsp != DC1394_SUCCESS)
-        //        {
-        //            std::stringstream ssError;
-        //            ssError << __PRETTY_FUNCTION__;
-        //            ssError << ": error unable to set dc1394 freature absolute value" << std::endl;
-        //            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
-        //        }
-        //    }
-        //}
-        //else
-        //{
-
-
-
-
-        //}
+        else if(prop.onePush && propInfoCurr.onePushCapable)
+        {
+            setFeatureModeOnePush_dc1394(prop.type);
+        }
+        else
+        {
+            if (prop.absoluteControl)
+            {
+                if (!propCurr.absoluteControl)
+                {
+                    setFeatureAbsoluteControl_dc1394(prop.type);
+                }
+                setFeatureAbsoluteValue_dc1394(prop.type, prop.absoluteValue, propInfoCurr);
+            }
+            else
+            {
+                if (prop.type == PROPERTY_TYPE_WHITE_BALANCE)
+                {
+                    setFeatureWhiteBalance_dc1394(prop.valueA, prop.valueB);
+                }
+                else
+                {
+                    setFeatureValue_dc1394(prop.type,prop.value,propInfoCurr);
+                }
+            }
+        }
     }
-
 
     TimeStamp CameraDevice_dc1394::getImageTimeStamp()
     {
@@ -740,11 +723,108 @@ namespace bias {
         {
             std::stringstream ssError;
             ssError << __PRETTY_FUNCTION__;
-            ssError << ": error unable to get dc1394 freature information" << std::endl;
+            ssError << ": error unable to get dc1394 feature information" << std::endl;
             throw RuntimeError(ERROR_DC1394_GET_FEATURE_INFO, ssError.str());
+        }
+        //if (rsp != DC1394_SUCCESS)
+        //{
+        //    std::stringstream ssError;
+        //    ssError << __PRETTY_FUNCTION__;
+        //    ssError << ": error unable to get dc1394 feature information" << std::endl;
+        //    throw RuntimeError(ERROR_DC1394_GET_FEATURE_INFO, ssError.str());
+        //}
+
+
+    }
+
+
+    void CameraDevice_dc1394::setFeatureModeAuto_dc1394(PropertyType propType)
+    {
+        dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(propType);
+        dc1394error_t rsp = dc1394_feature_set_mode( camera_dc1394_,featureId_dc1394, DC1394_FEATURE_MODE_AUTO);
+        if (rsp != DC1394_SUCCESS)
+        {
+            std::stringstream ssError;
+            ssError << __PRETTY_FUNCTION__;
+            ssError << ": error unable to set dc1394 feature mode to auto" << std::endl;
+            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
         }
     }
 
+
+    void CameraDevice_dc1394::setFeatureModeOnePush_dc1394(PropertyType propType)
+    {
+        dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(propType);
+        dc1394error_t rsp = dc1394_feature_set_mode( camera_dc1394_,featureId_dc1394, DC1394_FEATURE_MODE_ONE_PUSH_AUTO);
+        if (rsp != DC1394_SUCCESS)
+        {
+            std::stringstream ssError;
+            ssError << __PRETTY_FUNCTION__;
+            ssError << ": error unable to set dc1394 feature mode to one push auto" << std::endl;
+            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+        }
+    }
+
+
+    void CameraDevice_dc1394::setFeatureAbsoluteControl_dc1394(PropertyType propType)
+    {
+        dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(propType);
+        dc1394error_t rsp = dc1394_feature_set_absolute_control( camera_dc1394_,featureId_dc1394, DC1394_ON);
+        if (rsp != DC1394_SUCCESS)
+        {
+            std::stringstream ssError;
+            ssError << __PRETTY_FUNCTION__;
+            ssError << ": error unable to set dc1394 feature mode to one push auto" << std::endl;
+            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+        }
+    }
+
+
+    void CameraDevice_dc1394::setFeatureAbsoluteValue_dc1394(PropertyType propType, float absValue, PropertyInfo propInfo)
+    {
+        if ((absValue >= propInfo.minAbsoluteValue) && (absValue <= propInfo.maxAbsoluteValue))
+        {
+            dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(propType);
+            dc1394error_t rsp = dc1394_feature_set_absolute_value(camera_dc1394_, featureId_dc1394, absValue);
+            if (rsp != DC1394_SUCCESS)
+            {
+                std::stringstream ssError;
+                ssError << __PRETTY_FUNCTION__;
+                ssError << ": error unable to set dc1394 feature absolute value" << std::endl;
+                throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+            }
+        }
+    }
+
+
+   void CameraDevice_dc1394::setFeatureValue_dc1394(PropertyType propType, unsigned int value, PropertyInfo propInfo)
+   {
+       if ((value >= propInfo.minValue) && (value <= propInfo.maxValue))
+       {
+           dc1394feature_t featureId_dc1394 = convertPropertyType_to_dc1394(propType);
+           dc1394error_t  rsp = dc1394_feature_set_value(camera_dc1394_, featureId_dc1394, (uint32_t)(value));
+           if (rsp != DC1394_SUCCESS)
+           {
+               std::stringstream ssError;
+               ssError << __PRETTY_FUNCTION__;
+               ssError << ": error unable to set dc1394 feature value" << std::endl;
+               throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+           }
+       }
+   }
+
+
+   void CameraDevice_dc1394::setFeatureWhiteBalance_dc1394(unsigned int valueA, unsigned int valueB)
+   {
+        dc1394error_t  rsp = dc1394_feature_whitebalance_set_value(camera_dc1394_,valueB,valueA);
+        if (rsp != DC1394_SUCCESS)
+        {
+            std::stringstream ssError;
+            ssError << __PRETTY_FUNCTION__;
+            ssError << ": error unable to set dc1394 feature white balance" << std::endl;
+            throw RuntimeError(ERROR_DC1394_SET_FEATURE, ssError.str());
+        }
+   }
 
 } // namespace bias
 

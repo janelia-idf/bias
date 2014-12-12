@@ -213,12 +213,7 @@ namespace bias
 
         updateCameraInfoMessage();
 
-#ifdef WITH_FC2
-        // WBD DEVEL TEMP
-        // -----------------------------------------
         updateAllMenus();
-        // -----------------------------------------
-#endif 
 
         rtnStatus.success = true;
         rtnStatus.message = QString("");
@@ -500,12 +495,7 @@ namespace bias
         capturing_ = true;
         showCameraLockFailMsg_ = false;
 
-#ifdef WITH_FC2
-        // WBD DEVEL TEMP
-        // ---------------------------------------------
         updateAllMenus();
-        // ---------------------------------------------
-#endif 
 
         showCameraLockFailMsg_ = true;
 
@@ -618,12 +608,7 @@ namespace bias
         framesPerSec_ = 0.0;
         updateAllImageLabels();
 
-#ifdef WITH_FC2
-        // WBD DEVEL TEMP
-        // ------------------------------------------------
         updateAllMenus();
-        // ------------------------------------------------
-#endif
 
         emit imageCaptureStopped();
 
@@ -3327,10 +3312,13 @@ namespace bias
 
     void CameraWindow::updateCameraMenu()
     {
+        // WBD: DEVEL
+        // ------------------------------------
         updateCameraVideoModeMenu();
         updateCameraFrameRateMenu();
         updateCameraPropertiesMenu();
         updateCameraTriggerMenu();
+        // ------------------------------------
 
         if (connected_) 
         { 
@@ -3537,9 +3525,11 @@ namespace bias
         PropertyList propList;
         PropertyInfoMap propInfoMap;
 
-        if (!connected_) { return; }
+        if (!connected_) 
+        { 
+            return; 
+        }
 
-        // Remove any existing actions from menu
         deleteMenuActions(menuCameraPropertiesPtr_);
 
         // Get list of properties from camera 

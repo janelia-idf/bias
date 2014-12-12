@@ -15,7 +15,6 @@ namespace bias
     // ------------------------------------------------------------------------
     dc1394feature_t convertPropertyType_to_dc1394(PropertyType propType);
     void convertProperty_to_dc1394(Property prop, dc1394feature_info_t &featureInfo_dc1394);
-    void convertPropertyInfo_to_dc1394(Property prop, dc1394feature_info_t &featureInfo_dc1394);
     dc1394video_mode_t convertVideoMode_to_dc1394(VideoMode vidMode, ImageMode imgMode);
     dc1394framerate_t convertFrameRate_to_dc1394(FrameRate frmRate);
     dc1394bool_t convertBool_to_dc1394(bool value);
@@ -24,8 +23,8 @@ namespace bias
     // Conversion from libdc1394 types to BIAS types
     // ------------------------------------------------------------------------
     PropertyType convertPropertyType_from_dc1394(dc1394feature_t feature_dc1394);
-    Property convertProperty_from_dc1394(const dc1394feature_info_t featureInfo_dc1394);
-    PropertyInfo convertPropertyInfo_from_dc1394(const dc1394feature_info_t featureInfo_dc1394);
+    Property convertProperty_from_dc1394(const dc1394feature_info_t &featureInfo_dc1394);
+    PropertyInfo convertPropertyInfo_from_dc1394(const dc1394feature_info_t &featureInfo_dc1394);
     VideoMode convertVideoMode_from_dc1394(dc1394video_mode_t vidMode_dc1394);
     FrameRate convertFrameRate_from_dc1394(dc1394framerate_t frmRate_dc1394);
     ImageMode convertImageMode_from_dc1394(dc1394video_mode_t vidMode_dc1394);
